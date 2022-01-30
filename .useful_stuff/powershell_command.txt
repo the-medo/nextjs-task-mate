@@ -1,0 +1,2 @@
+# kedze "<" nefunguje v powershell
+docker exec -i task-mate-mysql-1 sh -c  'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" $MYSQL_DATABASE' | Get-Content db/schema.sql
