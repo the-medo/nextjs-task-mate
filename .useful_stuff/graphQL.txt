@@ -1,0 +1,27 @@
+query Tasks($status: TaskStatus) {
+  tasks(status: $status) {
+    id
+    title
+    status
+  }
+}
+
+{
+  "status": "completed"
+}
+
+
+===========================================================
+mutation CreateTask($input: CreateTaskInput!) {
+  createTask(input: $input) {
+    id
+    title
+    status
+  }
+}
+
+{
+  "input": {
+    "title": "My task #1"
+  }
+}
