@@ -1,10 +1,11 @@
-import { /*ApolloServer,*/ gql } from 'apollo-server-micro'
-import { IResolvers } from '@graphql-tools/utils';
+import { /*ApolloServer,*/ gql, UserInputError} from 'apollo-server-micro'
 import { ApolloServerPluginLandingPageGraphQLPlayground } from 'apollo-server-core';
 import {NextApiHandler} from "next";
 import {ApolloServer } from "apollo-server-micro";
 import mysql, {ServerlessMysql} from 'serverless-mysql';
 import {OkPacket} from "mysql";
+import {Resolvers, Task, TaskStatus} from "../../generated/graphql-backend";
+import arg from "arg";
 
 const typeDefs = gql`
   enum TaskStatus {
@@ -44,17 +45,6 @@ interface ApolloContext {
   db: mysql.ServerlessMysql;
 }
 
-enum TaskStatus {
-  active = 'active',
-  completed = 'completed',
-}
-
-interface Task {
-  id: number;
-  title: string;
-  status: TaskStatus;
-}
-
 interface TaskDbRow {
   id: number;
   title: string;
@@ -62,10 +52,29 @@ interface TaskDbRow {
 }
 
 type TasksDbQueryResult = TaskDbRow[];
+type TaskDbQueryResult = TaskDbRow[];
 
-const resolvers: IResolvers<any, ApolloContext> = {
+const  transformTaskDbRowToTask = (row: TaskDbRow): Task => {
+  return {
+    id: row.id,
+    title: row.title,
+    status: row.task_status
+  };
+}
+
+const getTaskById = async (id: number, db: mysql.ServerlessMysql) => {
+  const tasks = await db.query<TaskDbQueryResult>(
+      'SELECT * FROM tasks WHERE id = ?',
+      [id],
+  );
+  await db.end();
+
+  return tasks.length ? transformTaskDbRowToTask(tasks[0]) : null;
+}
+
+const resolvers: Resolvers<ApolloContext> = {
   Query: {
-    async tasks(parent, args: {status?: TaskStatus}, context): Promise<Task[]> {
+    async tasks(parent, args, context): Promise<Task[]> {
       const {status} = args;
       let query = 'SELECT id, title, task_status FROM tasks';
       const queryParams: string[] = [];
@@ -80,14 +89,10 @@ const resolvers: IResolvers<any, ApolloContext> = {
           queryParams,
       );
       await db.end();
-      return tasks.map(({id, title, task_status}) => ({
-        id,
-        title,
-        status: task_status
-      }));
+      return tasks.map(({id, title, task_status}) => transformTaskDbRowToTask({id, title, task_status}));
     },
-    task(parent, args, context) {
-      return null
+    async task(parent, args, context) {
+      return await getTaskById(args.id, context.db);
     },
   },
 
@@ -97,21 +102,59 @@ const resolvers: IResolvers<any, ApolloContext> = {
 
       const result = await context.db.query<OkPacket>(
           'INSERT INTO tasks (title, task_status) VALUES(?, ?)',
-          [input.title, TaskStatus.active],
+          [input.title, TaskStatus.Active],
       )
       await db.end();
 
       return {
         id: result.insertId,
         title: input.title,
-        status: TaskStatus.active,
+        status: TaskStatus.Active,
       }
     },
-    updateTask(parent, args, context) {
-      return null
+    async updateTask(parent, args, context) {
+      const {id, title, status} = args.input;
+
+      let updateSet: string[] = [];
+      let queryParams: (string | number)[] = [];
+
+      if (title) {
+        updateSet.push(` title = ? `);
+        queryParams.push(title)
+      }
+
+      if (status) {
+        updateSet.push(` task_status = ? `);
+        queryParams.push(status)
+      }
+
+      queryParams.push(id);
+
+      const query = `UPDATE tasks SET ${updateSet.join(', ')} WHERE id = ?`;
+
+      const tasks = await context.db.query<TasksDbQueryResult>(
+          query,
+          queryParams,
+      );
+
+      const updatedTask = await getTaskById(id, context.db);
+      return updatedTask;
     },
-    deleteTask(parent, args, context) {
-      return null
+    async deleteTask(parent, args, context) {
+      const {id} = args;
+
+      const deletedTask = await getTaskById(id, context.db);
+
+      if (!deletedTask) {
+        throw new UserInputError('Could not find your task.');
+      }
+
+      await context.db.query<OkPacket>(
+          'DELETE FROM tasks WHERE id = ?',
+          [id],
+      );
+
+      return deletedTask;
     },
   }
 }
@@ -154,27 +197,6 @@ const handler: NextApiHandler = async (req, res) => {
 
 export default handler;
 
-/*
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Credentials', 'true')
-  res.setHeader(
-      'Access-Control-Allow-Origin',
-      'https://studio.apollographql.com'
-  )
-  res.setHeader(
-      'Access-Control-Allow-Headers',
-      'Origin, X-Requested-With, Content-Type, Accept'
-  )
-  if (req.method === 'OPTIONS') {
-    res.end()
-    return false
-  }
-
-  await startServer
-  await apolloServer.createHandler({
-    path: '/api/graphql',
-  })(req, res)
-}*/
 
 export const config = {
   api: {
